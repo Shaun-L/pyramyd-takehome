@@ -1,0 +1,3 @@
+Test Cases:
+""CRM", Contact Management, Sales Automation" (Expected: Desktop Sales Office)
+""CRM", Client Management, Invoice Management" (Expected: Solid Performers CRM)
