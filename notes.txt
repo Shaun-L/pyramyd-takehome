@@ -1,3 +1,20 @@
 Test Cases:
 ""CRM", Contact Management, Sales Automation" (Expected: Desktop Sales Office)
 ""CRM", Client Management, Invoice Management" (Expected: Solid Performers CRM)
+
+I used empirical testing to find the best thresholds (having target vendors, and seeing what the returned similarity is)
+
+Though process for Similarity Scoring Threshold balancing: High recall > High Precision. Ideally, we would strive for the perfect balance, but to cushion ourselves,
+the recall being higher is fine since we want to be a decent amount of vendors to choose from when it comes to rating. Realistically, we are being
+hindered by the small size of he current dataset. This threshold would most likely be shifted upwards in a larger dataset to account for more irrelevant data,
+and therefore lowering the compute time.
+
+tested it but avoiding the usage TF-IDF due to its lack of capturing in semantic meaning. 
+
+
+To do:
+- Need to test openai embeddings
+- 
+
+Future directions:
+

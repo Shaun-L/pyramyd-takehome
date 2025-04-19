@@ -14,7 +14,7 @@ model = SentenceTransformer('all-MiniLM-L6-v2')
 print("Model loaded successfully")
 
 # Set fixed threshold - users cannot change this
-SIMILARITY_THRESHOLD = 0.4
+SIMILARITY_THRESHOLD = 0.2
 
 def get_similar_vendors(df, software_category, capabilities):
     """
@@ -207,19 +207,18 @@ def rank_vendors(matched_vendors, df, capabilities):
         # Add additional info for transparency
         ranked_vendors.append({
             'product_name': product_name,
-            'combined_score': combined_score,
+            'combined_score': float(combined_score),  # Convert from float32 to float
             'rating': float(rating_score * 5) if pd.notna(rating_score) else None,
             'reviews_count': int(reviews_count) if pd.notna(reviews_count) else 0,
-            'similarity_score': base_score,
+            'similarity_score': float(base_score),  # Convert from float32 to float
             'detail_scores': {
-                'similarity': base_score,
-                'rating': rating_score,
-                'reviews_count': reviews_score,
-                'pros_matching': pros_score,
-                'feature_coverage': feature_coverage
+                'similarity': float(base_score),  # Convert from float32 to float
+                'rating': float(rating_score),  # Convert from float32 to float
+                'reviews_count': float(reviews_score),  # Convert from float32 to float
+                'pros_matching': float(pros_score),  # Convert from float32 to float
+                'feature_coverage': float(feature_coverage)  # Convert from float32 to float
             }
         })
-    
     # Sort by combined score
     ranked_vendors = sorted(ranked_vendors, key=lambda x: x['combined_score'], reverse=True)
     return ranked_vendors
@@ -272,7 +271,8 @@ def vendor_qualification():
         
         software_category = data['software_category']
         capabilities = data['capabilities']
-        
+        print(f"User passed software_category: {software_category}")
+        print(f"User passed capabilities: {capabilities}")
         # Ensure capabilities is a list
         if isinstance(capabilities, str):
             capabilities = [capabilities]
@@ -286,18 +286,16 @@ def vendor_qualification():
             software_category, 
             capabilities
         )
+        print(len(similar_vendors))
         
         # Rank vendors
         ranked_vendors = rank_vendors(similar_vendors, vendors_df, capabilities)
+        print(len(ranked_vendors))
         
         # Return top 10 vendors
         return jsonify({
-            "query": {
-                "software_category": software_category,
-                "capabilities": capabilities,
-            },
             "total_matches": len(ranked_vendors),
-            "top_vendors": ranked_vendors[:10]  # Return top 10 only
+            "top_vendors": [(str(vendor["product_name"]) + ": " + str(vendor["combined_score"])) for vendor in ranked_vendors[:10]]
         })
         
     except Exception as e:
