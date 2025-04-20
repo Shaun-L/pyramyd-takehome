@@ -1,40 +1,29 @@
-from flask import Flask, request, jsonify
+import os
 import pandas as pd
 import numpy as np
+from flask import Flask, request, jsonify
 from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
-import time
-import os
 
+# Initialize Flask app
 app = Flask(__name__)
 
-# Load the sentence transformer model
-print("Loading model...")
+# Load the SentenceTransformer model
 model = SentenceTransformer('all-MiniLM-L6-v2')
-print("Model loaded successfully")
 
-# Set fixed threshold - users cannot change this
-SIMILARITY_THRESHOLD = 0.2
+# Load the dataset
+def load_data():
+    print("Loading Vendor Dataset...")
+    try: 
+      data_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'G2 software - CRM Category Product Overviews.csv')
+      df = pd.read_csv(data_path)
+      print("Dataset Successfully loaded!")
+      return df
+    except Exception as e:
+      print(f"There was an error loading the dataset: {e}")
 
-def get_similar_vendors(df, software_category, capabilities):
-    """
-    Find vendors similar to the given capabilities within a specific software category
-    
-    Parameters:
-    - df: DataFrame with vendor data
-    - software_category: Category of software to filter by
-    - capabilities: List of capabilities or string of capabilities
-    
-    Returns:
-    - List of similar vendors with similarity scores
-    """
-    # Weights for different attributes
-    weights = {
-        "categories": 0.25,  # Category importance
-        "overview": 0.5,     # Overview importance
-        "description": 0.25  # Description importance
-    }
-    
+
+def get_similar_vendors_new(df, software_category, capabilities):    
     # Convert capabilities to a single string for embedding
     query = " ".join(capabilities) if isinstance(capabilities, list) else capabilities
     
@@ -47,294 +36,185 @@ def get_similar_vendors(df, software_category, capabilities):
         # Handle missing values
         description = row["description"] if pd.notna(row["description"]) else ""
         overview = row["overview"] if pd.notna(row["overview"]) else ""
+        features = row["Features"] if pd.notna(row["Features"]) else ""
+        pros_list = row["pros_list"] if pd.notna(row["pros_list"]) else ""
         categories = row["categories"] if pd.notna(row["categories"]) else ""
         
+        # Create composite text field combining all relevant fields
+        # We give more weight to features by repeating it
+        composite_text = f"{description} {overview} {features} {features} {pros_list} {categories}"
+        
         # Calculate individual similarity scores
-        desc_embedding = model.encode(description, convert_to_tensor=True)
-        overview_embedding = model.encode(overview, convert_to_tensor=True)
-        categories_embedding = model.encode(categories, convert_to_tensor=True)
+        composite_embedding = model.encode(composite_text, convert_to_tensor=True)
         query_embedding = model.encode(query, convert_to_tensor=True)
         
         # Move tensors to CPU and convert to NumPy arrays
         query_embedding_cpu = query_embedding.cpu().numpy()
-        desc_embedding_cpu = desc_embedding.cpu().numpy()
-        overview_embedding_cpu = overview_embedding.cpu().numpy()
-        categories_embedding_cpu = categories_embedding.cpu().numpy()
+        composite_embedding_cpu = composite_embedding.cpu().numpy()
         
         # Calculate individual similarity scores
-        desc_similarity = cosine_similarity([query_embedding_cpu], [desc_embedding_cpu])[0][0]
-        overview_similarity = cosine_similarity([query_embedding_cpu], [overview_embedding_cpu])[0][0]
-        categories_similarity = cosine_similarity([query_embedding_cpu], [categories_embedding_cpu])[0][0]
+        composite_similarity = cosine_similarity([query_embedding_cpu], [composite_embedding_cpu])[0][0]
         
-        # Apply weights
-        weighted_similarity = (
-            weights["description"] * desc_similarity +
-            weights["overview"] * overview_similarity +
-            weights["categories"] * categories_similarity
-        )
+        # If rating exists, store it for potential ranking use
+        rating = row["rating"] if pd.notna(row["rating"]) else None
         
         processed.append({
             "product_name": row["product_name"],
-            "similarity": weighted_similarity,
-            "individual_scores": {
-                "description": desc_similarity,
-                "overview": overview_similarity,
-                "categories": categories_similarity
-            }
+            "similarity": composite_similarity,
+            "rating": rating,
+            "url": row["url"] if pd.notna(row["url"]) else None
         })
     
-    # Filter by fixed threshold
-    filtered = [entry for entry in processed if entry["similarity"] >= SIMILARITY_THRESHOLD]
+    # Handle case where no vendors were processed
+    if not processed:
+        return []
+        
+    # Find max similarity score
+    max_similarity = max(entry["similarity"] for entry in processed)
+
+    print(f"Debug: Max similarity = {max_similarity}")
+    
+    # Calculate dynamic threshold
+    dynamic_threshold = max(max_similarity - 0.15, 0.1)  # With a floor of 0.1
+    
+    # Filter by dynamic threshold
+    filtered = [entry for entry in processed if entry["similarity"] >= dynamic_threshold]
     
     # Sort and return top vendors
     top_vendors = sorted(filtered, key=lambda x: x["similarity"], reverse=True)
     return top_vendors
 
-def rank_vendors(matched_vendors, df, capabilities):
+def rank_vendors_optimized(matched_vendors, df):
     """
-    Rank vendors based on multiple criteria with weighted importance
+    Comprehensively optimized vendor ranking function
     
     Parameters:
     - matched_vendors: List of vendors that passed the similarity threshold
     - df: Original dataframe with all vendor information
-    - capabilities: List of capabilities requested by the user
     
     Returns:
     - List of ranked vendors with scores
     """
     # Define weights for different ranking factors
     weights = {
-        'similarity_score': 0.45,   # Feature similarity is most important
-        'rating': 0.25,             # Overall rating is second most important
-        'reviews_count': 0.15,      # More reviews = more reliable rating
-        'pros_matching': 0.10,      # Pros that match capabilities
-        'feature_coverage': 0.05    # How many requested capabilities are covered
+        'similarity_score': 0.45,   # Feature similarity
+        'rating': 0.25,             # Overall rating
+        'reviews_count': 0.10,      # More reviews = more reliable rating
+        'completeness': 0.10,       # How complete the vendor data is
+        'popularity': 0.10          # Based on discussions count
     }
     
+    # Precompute data for optimization
+    # Create lookup dictionary for faster access
+    vendor_lookup = {row['product_name']: row.to_dict() for _, row in df.iterrows()}
+    
+    # Precompute max values for normalization
+    max_reviews = df['reviews_count'].max() if not pd.isna(df['reviews_count'].max()) else 1
+    max_discussions = df['discussions_count'].max() if not pd.isna(df['discussions_count'].max()) else 1
+    log_max_reviews = np.log1p(max_reviews)
+    log_max_discussions = np.log1p(max_discussions)
+    
+    # columns to check for data completeness
+    completeness_columns = ['description', 'overview', 'Features', 'pros_list', 'rating', 'reviews_count', 
+    'seller_description', 'cons_list', 'pricing', 'position_against_competitors']
+    
+    # Process each vendor
     ranked_vendors = []
     
     for vendor in matched_vendors:
         product_name = vendor['product_name']
-        # Get the full vendor data from the dataframe
-        vendor_data = df[df['product_name'] == product_name].iloc[0]
+        vendor_data = vendor_lookup.get(product_name, {})
         
-        # 1. Base similarity score (already calculated)
-        base_score = vendor['similarity']
+        if not vendor_data:
+            continue
+            
+        # Initialize scores
+        scores = {
+            'similarity_score': float(vendor['similarity']),
+            'rating': 0.5,  # Default value
+            'reviews_count': 0.0,
+            'completeness': 0.0,
+            'popularity': 0.0
+        }
         
-        # 2. Rating score (normalized to 0-1)
-        rating_score = vendor_data.get('rating', 0)
-        if pd.notna(rating_score):
-            rating_score = float(rating_score) / 5.0  # Normalize to 0-1
-        else:
-            rating_score = 0.5  # Default if missing
+        # Calculate rating score
+        rating = vendor_data.get('rating')
+        if pd.notna(rating):
+            scores['rating'] = float(rating) / 5.0
         
-        # 3. Review count score (log scale to dampen effect of extremely high counts)
-        reviews_count = vendor_data.get('reviews_count', 0)
+        # Calculate reviews count score
+        reviews_count = vendor_data.get('reviews_count')
         if pd.notna(reviews_count) and reviews_count > 0:
-            # Log scale normalization (ln(x+1)/ln(max+1))
-            reviews_score = np.log1p(reviews_count) / np.log1p(df['reviews_count'].max())
-        else:
-            reviews_score = 0
+            scores['reviews_count'] = np.log1p(float(reviews_count)) / log_max_reviews
         
-        # 4. Pros matching score
-        pros_score = 0
-        if pd.notna(vendor_data.get('pros_list')):
-            try:
-                # Parse pros list if it's in string format
-                pros_list = eval(vendor_data['pros_list']) if isinstance(vendor_data['pros_list'], str) else vendor_data['pros_list']
-                
-                # Count matches between capabilities and pros
-                matches = 0
-                total_pros = 0
-                for pro_item in pros_list:
-                    if isinstance(pro_item, dict) and 'text' in pro_item:
-                        pro_text = pro_item['text'].lower()
-                        total_pros += 1
-                        for capability in capabilities:
-                            if capability.lower() in pro_text:
-                                matches += 1
-                                break
-                
-                pros_score = matches / max(total_pros, 1) if total_pros > 0 else 0
-            except:
-                pros_score = 0
+        # Calculate data completeness
+        completeness = sum(1 for col in completeness_columns if pd.notna(vendor_data.get(col))) / len(completeness_columns)
+        scores['completeness'] = completeness
         
-        # 5. Feature coverage score
-        feature_coverage = 0
-        if pd.notna(vendor_data.get('Features')):
-            try:
-                # Parse features if in string format
-                features_data = eval(vendor_data['Features']) if isinstance(vendor_data['Features'], str) else vendor_data['Features']
-                
-                # Count how many requested capabilities appear in features
-                matched_capabilities = 0
-                total_capabilities = len(capabilities)
-                
-                # Track which capabilities have been matched to avoid double-counting
-                matched_capability_flags = {cap.lower(): False for cap in capabilities}
-                
-                # Iterate through all feature categories
-                for category in features_data:
-                    if isinstance(category, dict) and 'features' in category:
-                        for feature in category['features']:
-                            if isinstance(feature, dict) and 'description' in feature and feature['description']:
-                                feature_desc = feature['description'].lower()
-                                
-                                # Check each capability
-                                for capability in capabilities:
-                                    capability_lower = capability.lower()
-                                    # If this capability hasn't been matched yet and is found in this feature
-                                    if not matched_capability_flags[capability_lower] and capability_lower in feature_desc:
-                                        matched_capability_flags[capability_lower] = True
-                                        matched_capabilities += 1
-                
-                # Properly normalize to 0-1 range
-                feature_coverage = matched_capabilities / total_capabilities if total_capabilities > 0 else 0
-                
-            except Exception as e:
-                print(f"Error processing features: {e}")
-                feature_coverage = 0
+        # Calculate popularity based on discussions
+        discussions_count = vendor_data.get('discussions_count')
+        if pd.notna(discussions_count) and discussions_count > 0:
+            scores['popularity'] = np.log1p(float(discussions_count)) / log_max_discussions
         
         # Calculate combined score
-        combined_score = (
-            weights['similarity_score'] * base_score +
-            weights['rating'] * rating_score +
-            weights['reviews_count'] * reviews_score +
-            weights['pros_matching'] * pros_score +
-            weights['feature_coverage'] * feature_coverage
-        )
+        combined_score = sum(weights[key] * scores[key] for key in weights.keys())
         
-        # Add additional info for transparency
+        # Add to ranked vendors
         ranked_vendors.append({
             'product_name': product_name,
-            'combined_score': float(combined_score),  # Convert from float32 to float
-            'rating': float(rating_score * 5) if pd.notna(rating_score) else None,
+            'combined_score': float(combined_score),
+            'url': vendor_data.get('url', None),
+            'rating': float(scores['rating'] * 5),
             'reviews_count': int(reviews_count) if pd.notna(reviews_count) else 0,
-            'similarity_score': float(base_score),  # Convert from float32 to float
-            'detail_scores': {
-                'similarity': float(base_score),  # Convert from float32 to float
-                'rating': float(rating_score),  # Convert from float32 to float
-                'reviews_count': float(reviews_score),  # Convert from float32 to float
-                'pros_matching': float(pros_score),  # Convert from float32 to float
-                'feature_coverage': float(feature_coverage)  # Convert from float32 to float
-            }
+            'similarity_score': scores['similarity_score'],
+            'detail_scores': {k: float(v) for k, v in scores.items()},
+            'data_completeness': float(completeness)
         })
+    
     # Sort by combined score
-    ranked_vendors = sorted(ranked_vendors, key=lambda x: x['combined_score'], reverse=True)
-    return ranked_vendors
+    return sorted(ranked_vendors, key=lambda x: x['combined_score'], reverse=True)
 
-# Global variables for data cache
-df = None
-last_loaded = 0
-DATA_RELOAD_INTERVAL = 3600  # Reload data every hour
-
-def load_data():
-    """Load vendor data from CSV file"""
-    global df, last_loaded
-    current_time = time.time()
-    
-    # Only reload if time has passed or first load
-    if df is None or current_time - last_loaded > DATA_RELOAD_INTERVAL:
-        print("Loading vendor data...")
-        # Assuming CSV file is in a 'data' directory
-        data_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'G2 software - CRM Category Product Overviews.csv')
-        df = pd.read_csv(data_path)
-        last_loaded = current_time
-        print(f"Data loaded: {len(df)} vendors")
-    
-    return df
-
-@app.route('/health', methods=['GET'])
-def health_check():
-    """Simple health check endpoint"""
-    return jsonify({"status": "healthy", "timestamp": time.time()})
-
+# Create the endpoint for vendor qualification
 @app.route('/vendor_qualification', methods=['POST'])
 def vendor_qualification():
-    """
-    API endpoint to qualify and rank vendors
+    # Get request data
+    request_data = request.get_json()
     
-    Expected JSON format:
-    {
-        "software_category": "Accounting & Finance Software",
-        "capabilities": ["Budgeting", "Invoicing", "..."]
-    }
-    """
-    try:
-        # Get request data
-        data = request.get_json()
-        
-        if not data or 'software_category' not in data or 'capabilities' not in data:
-            return jsonify({
-                "error": "Invalid request format. Please provide 'software_category' and 'capabilities'."
-            }), 400
-        
-        software_category = data['software_category']
-        capabilities = data['capabilities']
-        print(f"User passed software_category: {software_category}")
-        print(f"User passed capabilities: {capabilities}")
-        # Ensure capabilities is a list
-        if isinstance(capabilities, str):
-            capabilities = [capabilities]
-        
-        # Load data
-        vendors_df = load_data()
-        
-        # Find similar vendors
-        similar_vendors = get_similar_vendors(
-            vendors_df, 
-            software_category, 
-            capabilities
-        )
-        print(len(similar_vendors))
-        
-        # Rank vendors
-        ranked_vendors = rank_vendors(similar_vendors, vendors_df, capabilities)
-        print(len(ranked_vendors))
-        
-        # Return top 10 vendors
+    # Validate required parameters
+    if not request_data or 'software_category' not in request_data or 'capabilities' not in request_data:
         return jsonify({
-            "total_matches": len(ranked_vendors),
-            "top_vendors": [(str(vendor["product_name"]) + ": " + str(vendor["combined_score"])) for vendor in ranked_vendors[:10]]
-        })
-        
-    except Exception as e:
-        print(f"Error processing request: {str(e)}")
+            'error': 'Missing required parameters. Please provide software_category and capabilities.'
+        }), 400
+    
+    # Extract parameters
+    software_category = request_data['software_category']
+    capabilities = request_data['capabilities']
+    
+    # Get similar vendors
+    matched_vendors = get_similar_vendors_new(df, software_category, capabilities)
+    
+    if not matched_vendors:
         return jsonify({
-            "error": f"An error occurred: {str(e)}"
-        }), 500
+            'message': 'No vendors found matching the criteria',
+            'vendors': []
+        }), 200
+    
+    # Rank vendors
+    ranked_vendors = rank_vendors_optimized(matched_vendors, df)
+    
+    # Get top 10 vendors
+    top_vendors = ranked_vendors[:10]
 
-@app.route('/', methods=['GET'])
-def index():
-    """Simple landing page"""
-    return """
-    <html>
-        <head>
-            <title>Vendor Qualification API</title>
-            <style>
-                body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }
-                h1 { color: #333; }
-                pre { background-color: #f5f5f5; padding: 15px; border-radius: 5px; }
-            </style>
-        </head>
-        <body>
-            <h1>Vendor Qualification API</h1>
-            <p>Use the POST /vendor_qualification endpoint with the following JSON format:</p>
-            <pre>
-{
-    "software_category": "Accounting & Finance Software",
-    "capabilities": ["Budgeting", "Invoicing"]
-}
-            </pre>
-            <p>The API will return the top 10 ranked vendors matching your criteria.</p>
-        </body>
-    </html>
-    """
+    top_vendor_names = [f"{i+1}: {vendor['product_name']}" for i, vendor in enumerate(top_vendors)]
+
+
+    # Return results
+    return jsonify({
+        'message': f'Found {len(matched_vendors)} vendors closely matching the criteria',
+        'top_vendors': top_vendor_names
+    }), 200
+
+df = load_data()
 
 if __name__ == '__main__':
-    # Load data at startup
-    load_data()
-    
-    # Run the Flask app
-    port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port, debug=False)
+    app.run(debug=True, host='0.0.0.0', port=5000)

@@ -1,6 +1,6 @@
 Test Cases:
-""CRM", Contact Management, Sales Automation" (Expected: Desktop Sales Office)
-""CRM", Client Management, Invoice Management" (Expected: Solid Performers CRM)
+"CRM", Capabilities: ['Contact Management', 'Sales Automation'] (Expected: Desktop Sales Office)
+"CRM", Capabilities: ['Client Management', 'Invoice Management'] (Expected: Solid Performers CRM)
 
 I used empirical testing to find the best thresholds (having target vendors, and seeing what the returned similarity is)
 
@@ -11,10 +11,17 @@ and therefore lowering the compute time.
 
 tested it but avoiding the usage TF-IDF due to its lack of capturing in semantic meaning. 
 
+Another issue I had was trying to avoid bias in simlarity matching if a company was missing specific columns, until I came to the realization that
+that can't be avoided as long as we are looking at this singular stream of data as our reference. This shifted my lens to try not to overadjust for
+NA values since it cannot be avoided. The only way we could avoid it would be to get more data on the specific company through other means. 
 
-To do:
-- Need to test openai embeddings
-- 
+docker instructions:
+- docker build -t vendor-qualification-app .
+- docker run -p 5000:5000 vendor-qualification-app
+
+README Notes: 
+- Highlight that I took a test/iteration based approach (I wanted to see results of an idea instead of overthinking it and then implementing)
+
 
 Future directions:
 
