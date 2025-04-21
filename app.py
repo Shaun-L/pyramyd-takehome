@@ -8,7 +8,7 @@ from sklearn.metrics.pairwise import cosine_similarity
 # Initialize Flask app
 app = Flask(__name__)
 
-# Load the SentenceTransformer model
+# Load the SentenceTransformer model on startup
 model = SentenceTransformer('all-MiniLM-L6-v2')
 
 # Load the dataset
@@ -210,10 +210,10 @@ def vendor_qualification():
 
     # Return results
     return jsonify({
-        'message': f'Found {len(matched_vendors)} vendors closely matching the criteria',
         'top_vendors': top_vendor_names
     }), 200
 
+# Load the data into df on startup
 df = load_data()
 
 if __name__ == '__main__':

@@ -1,6 +1,16 @@
 Test Cases:
 "CRM", Capabilities: ['Contact Management', 'Sales Automation'] (Expected: Desktop Sales Office)
 "CRM", Capabilities: ['Client Management', 'Invoice Management'] (Expected: Solid Performers CRM)
+"Email Marketing", Capabilities: ['Cloud based'] (Expected: webCRM)
+"CRM", Capabilities: [] (Expected: NO ERRORS)
+"CRM", Capabilities: ['Open Source'] (Expected: EspoCRM)
+"CRM", Capabilities: ['Call Reporting', 'Voicemail transcription'] (Expected: Zimplu CRM)
+"Pricing", Capabilities: [] (Expected: NeoCRM)
+
+README Notes: 
+Bring up qualms about software category, how we can only choose one, not two since the example query
+says so. and also how I assume that this field will be typed in correctly, there is no semantic portion.
+This is because I assume that companies select this as like a dropdown option, how there is no Place for mistakes
 
 I used empirical testing to find the best thresholds (having target vendors, and seeing what the returned similarity is)
 
@@ -18,10 +28,4 @@ NA values since it cannot be avoided. The only way we could avoid it would be to
 docker instructions:
 - docker build -t vendor-qualification-app .
 - docker run -p 5000:5000 vendor-qualification-app
-
-README Notes: 
-- Highlight that I took a test/iteration based approach (I wanted to see results of an idea instead of overthinking it and then implementing)
-
-
-Future directions:
 
