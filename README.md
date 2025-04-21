@@ -1,21 +1,10 @@
 # **Vendor Qualification System**
 
-A lightweight, test-driven vendor qualification and ranking system for software sourcing decisions. Built as part of a take-home assignment, the system evaluates vendors based on semantic similarity to user-specified capabilities and ranks them using multiple quality dimensions.
-
----
-
 ## **Objective**
 
-Build a system that:
+Build a **lightweight Vendor Qualification System** that processes a CSV file, evaluates software vendors based on feature similarity, and ranks them accordingly.
 
-1. **Processes vendor data** from a CSV.
-2. **Extracts relevant vendors** based on software category and user-desired capabilities.
-3. **Computes feature similarity** between the user's query and vendor details using semantic models.
-4. **Ranks** the selected vendors using a weighted combination of:
-   - Similarity score
-   - User ratings
-   - Review and discussion volume
-   - Metadata completeness
+The goal of this assignment is to assess my Data science skills, problem-solving approach, and proficiency in **parsing & data processing, text comparison & similarity scoring, text search & ranking algorithms, and efficient data structuring & retrieval.**
 
 ---
 
@@ -28,6 +17,8 @@ docker build -t vendor-qualification-app .
 # Run the container
 docker run -p 5000:5000 vendor-qualification-app
 ```
+
+#### **Warning: It may take a minute to launch on startup, since we are loading SBert from `sentence_transformers` locally**
 
 ---
 
@@ -48,14 +39,14 @@ curl --request POST \
 ```
 
 #### Response:
-
-Top 10 vendors matching the input, ranked by composite score.
+- Query response time in seconds.
+- Top 10 vendors matching the query, ranked by composite score.
 
 ---
 
 # Approach & Thought Process
 
-I approached this project iteratively and empirically. Rather than prematurely optimizing, I emphasized **fast prototyping and testing**, using test cases to validate assumptions and update thresholds.
+I approached this project iteratively and empirically. Rather than prematurely optimizing, I did **fast prototyping and testing**, using test cases to validate assumptions and update thresholds.
 
 ## **Data Preprocessing and Evaluation**
 
@@ -82,7 +73,7 @@ This data exploration stage ensured that downstream semantic comparisons and ran
 
 ## **Semantic Similarity (Feature Matching)**
 
-The system initially explored **three different approaches** for measuring semantic similarity between a user's query and each vendor's profile. The core challenge was balancing **semantic accuracy** with **speed and scalability**.
+I initially explored **three different approaches** for measuring semantic similarity between a user's query and each vendor's profile, all using cosine smilarity as for comparison. The core challenge was balancing **semantic accuracy** with **speed and scalability**.
 
 ---
 
@@ -114,6 +105,7 @@ The system initially explored **three different approaches** for measuring seman
   - More control over which fields influence similarity.
 - **Cons**:
   - Field-by-field encoding is less effective than holistic context.
+  - Had a static threshold that was tuned through empirical testing. Turned out to be inneffective over a variety of different test cases do to the data's variability. 
   - Weights need tuning, and performance can vary based on missing values or inconsistent field quality.
   - Less resilient to multi-field semantics (e.g., a feature mentioned only in `pros_list` would be ignored).
 
@@ -134,17 +126,17 @@ The system initially explored **three different approaches** for measuring seman
 
 ### 📌 Decision Process
 
-- Started with **SBERT Weighted Fields** to balance semantic fidelity and control.
-- Tried **TF-IDF** for benchmarking performance and speed on large input volumes.
+- Started with **SBERT Weighted Fields** as a good baseline of semantic understanding and speed.
+- Tried **TF-IDF** for benchmarking speed, but lacked any semantic understanding.
 - Concluded with **SBERT + Composite Fields**, which significantly outperformed the others in **semantic robustness and test accuracy**.
-- Chose to optimize for **semantic accuracy** over raw speed, given the relatively small dataset and importance of capability alignment. (Still had response times of <2 seconds)
+- Chose to optimize for **semantic accuracy** over raw speed, given the relatively small dataset and importance of capability alignment. (**Still had response times of <3 seconds**)
 - **Avoided OpenAI Embeddings**, despite their strong performance, because I anticipated that scaling to a larger dataset would result in **excessive API overhead** and cost. Using local models like SBERT ensures the system remains scalable, efficient, and portable without dependency on external API limits.
 
 
 
 ## **Vendor Ranking**
 
-The system explored three different ranking strategies, evolving from a static quality-based approach to a fully optimized, query-aware hybrid model.
+I explored three different ranking strategies, evolving from a static quality-based approach to a fully optimized, query-aware hybrid model.
 
 ---
 
@@ -157,12 +149,12 @@ The system explored three different ranking strategies, evolving from a static q
   - **Data Completeness** (0.10)  
   - **Popularity** (discussions count, 0.10, log‑scaled)  
 - **Highlights**:
-  - **Precomputed lookups** for fast access to vendor data.  
+  - **Precomputed lookups** for fast access to vendor data through a dictionary data structure.  
   - **Normalized** review and discussion counts via log‑scaling to dampen extremes.  
   - **Completeness Metric** penalizes vendors with missing key fields.  
 - **Pros**:
   - Balances semantic relevance with objective quality and completeness.  
-  - Scalable precomputations ensure performance on larger datasets.  
+  - Scalable precomputations improves compute time, especially on larger datasets.  
   - Transparent detail scores for each vendor.  
 - **Cons**:
   - Slightly higher implementation complexity.  
@@ -234,16 +226,15 @@ The **expected output** is the vendor I was aiming to include in the **top 10 re
 
 - The dataset was limited in size, which made precision/recall tradeoffs difficult to tune perfectly.
 - In production, we would shift toward **stricter thresholds** to reduce noise.
-
+  - To be more specific: I shifted towards **higher recall** over precision to surface a **broader pool** of vendors for ranking due to the smaller size of the dataset. This meant that on average, we considered ~30% of the vendors (20 out of 63) in computation, which is fine for a dataset of this size, but if we had say 1000 CRM vendors, it would be computationally expensive. This was a natural bias due to the lack of data, but in production-scale scenarios, we would want to represent **way less (maybe <5% of vendors in a specified category)** to save on computational overhead. 
+  - To safeguard this in a larger dataset, we would just tighten the threshold to increase precision scores.
+- The dataset only including `"CRM"` data meant that the system hasn't been proven to be reliable for other software categories. 
+ 
 ### NA/Incomplete Data
 
 - Vendors with missing fields like `overview` or `description` naturally scored lower.
 - I avoided overcorrecting this since it's reflective of real-world limitations. Instead, completeness was factored into the ranking score.
-
-### Precision vs. Recall
-
-- Chose **higher recall** over precision to surface a **broader pool** of vendors for ranking.
-- Precision can be tightened with a larger dataset.
+- This would be combatted in a production environment by using external data sources to fill in the gaps in semantic representation for vendors. (e.g. using more than just G2)
 
 ### Software Category Limitations
 
@@ -253,7 +244,7 @@ The **expected output** is the vendor I was aiming to include in the **top 10 re
 
 ---
 
-## **Future Improvements**
+## **Future Improvements (If I had more time)**
 
 - **Refine Thresholding Function**: Calibrate dynamic threshold buffer based on dataset size or vendor distribution.
 - **Fine-tuned Embeddings**: Train domain-specific embeddings for vendor software matching.
@@ -267,7 +258,9 @@ The **expected output** is the vendor I was aiming to include in the **top 10 re
 
 ## **Summary**
 
-I had a great time working on this project; I would say my biggest takeaway is that it made me more aware of my decision making process by documenting it in this README. This is a habit that I plan on building on, as it showed me the gaps in my knowledge that I have, as well as giving me more structure throughout the project, as I always had to think and document before I acted on something.
+I had a great time working on this project; I would say my biggest takeaway is that it made me more aware of my decision making process by documenting it in this README. This is a habit that I plan on building on, as it showed me the gaps in my knowledge that I have, as well as giving me more structure throughout the project, as I always had to think and document on the reasons why I acted on something.
+
+All code is well documented and shown in app.py. I also left my  jupyter notebook which I used for testing/versioning in the "testing_files" directory (Warning: the notebook is messy and all over the place, it doesn't represent my full step-by-step thought process).
 
 If there is anything you would like me to expand on, I would love to talk about it! :)
 
